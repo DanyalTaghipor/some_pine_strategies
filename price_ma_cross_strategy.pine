@@ -1,0 +1,44 @@
+//@version=5
+strategy(title="Price/MA Cross Strategy", overlay=true, process_orders_on_close=true, default_qty_type=strategy.percent_of_equity, default_qty_value=100, currency=currency.USD, commission_value=0.1, initial_capital=1000)
+
+src = input(close, title="Source")
+
+ma_len = input.int(9, minval=1, title="Length", group = "MA Settings")
+ma_type  = input.string("SMA", options=["SMA", "EMA", "SMMA (RMA)", "WMA", "VWMA"], title="MA Types", group = "MA Settings")
+
+tp_percent = input.float(title="Take Profit (%)", minval=0.1, step=0.1, defval=0.3, group='Strategy Settings') / 100
+
+calc_ma(source, length, type_ma) =>
+    switch type_ma
+        "SMA" => ta.sma(source, length)
+        "EMA" => ta.ema(source, length)
+        "SMMA (RMA)" => ta.rma(source, length)
+        "WMA" => ta.wma(source, length)
+        "VWMA" => ta.vwma(source, length)
+
+ma_value = calc_ma(src, ma_len, ma_type)
+
+// sl_static = 0.1
+
+long_tp_price  = strategy.position_avg_price * (1 + tp_percent)
+// long_sl_price  = strategy.position_avg_price * (1 - sl_static)
+
+short_tp_price = strategy.position_avg_price * (1 - tp_percent)
+// short_sl_price  = strategy.position_avg_price * (1 + sl_static)
+
+if (strategy.position_size > 0)
+
+    strategy.exit(id="Long TP/SL", limit=long_tp_price, comment_loss='Long SL', comment_profit='Long TP', stop=na)
+
+    
+if (strategy.position_size < 0)
+
+    strategy.exit(id="Short TP/SL", limit=short_tp_price, comment_loss='Short SL', comment_profit='Short TP', stop=na)
+
+
+if ta.crossover(close, ma_value) and barstate.isconfirmed
+    strategy.entry("Enter Long", strategy.long)
+else if ta.crossunder(close, ma_value) and barstate.isconfirmed
+    strategy.entry("Enter Short", strategy.short)
+
+plot(ma_value, title="Moving Average", color=color.blue)
