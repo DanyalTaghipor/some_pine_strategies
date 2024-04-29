@@ -1,0 +1,430 @@
+//@version=5
+strategy(title="Multi Time-frame ATR Heatmap", overlay=false, format=format.price, precision=2)
+
+use_heik = input.bool(defval=false, title='Use Heikin Ashi Close?')
+
+
+open_heik = open
+high_heik = high
+low_heik = low
+close_heik = close
+
+
+// Source
+src_atr = use_heik ? (open_heik + high_heik + low_heik + close_heik) / 4 : input(close, title='Source')
+
+
+reverse_signal = input.bool(defval=false, title='Enable Reverse Signal?')
+limit_entry = input.bool(defval=false, title='Enable Limit Entry?')
+
+second_entry_method = input.bool(defval=false, title='Enable No-Confirm Entry Method?', group='No-Confirm Options')
+single_entry = input.bool(defval=false, title='Enable Single Entry?')
+
+
+
+profitPerc = input.float(title="Take Profit (%)", minval=0, step=1, defval=3, group='TP/SL') / 100
+lossPerc = input.float(title="Stop Loss (%)",  minval=0, step=1, defval=3) / 100
+
+// longProfitPerc = input.float(title="Long Take Profit (%)", minval=0, step=1, defval=3, group='TP/SL Long') / 100
+// longLossPerc = input.float(title="Long Stop Loss (%)",  minval=0, step=1, defval=3) / 100
+
+// shortProfitPerc = input.float(title="Short Take Profit (%)",  minval=0, step=1, defval=3, group='TP/SL Short') / 100
+// shortLossPerc = input.float(title="Short Stop Loss (%)",  minval=0, step=1, defval=3) / 100
+
+
+
+ma_function(source, length, smoothing) =>
+	switch smoothing
+		"RMA" => ta.rma(source, length)
+		"SMA" => ta.sma(source, length)
+		"EMA" => ta.ema(source, length)
+		"WMA" => ta.wma(source, length)
+
+
+getMa(ma_type, src, c) =>
+
+    if ma_type == 'SMA'
+        out = ta.sma(src, c)
+        
+    else if ma_type == 'EMA'
+        out = ta.ema(src, c)
+        
+    else if ma_type == 'WMA'
+        out = ta.wma(src, c)
+        
+    else if ma_type == 'VWMA'
+        out = ta.vwma(src, c)
+        
+
+
+atrMoneyMiner(atrPeriod, atrMultip, smooth) =>
+
+    xATR = ma_function(ta.tr(true) ,atrPeriod, smooth)
+    nLoss = atrMultip * xATR
+    
+    xATRTrailingStop = 0.0
+    iff_1 = src_atr > nz(xATRTrailingStop[1], 0) ? src_atr - nLoss : src_atr + nLoss
+    iff_2 = src_atr < nz(xATRTrailingStop[1], 0) and src_atr[1] < nz(xATRTrailingStop[1], 0) ? math.min(nz(xATRTrailingStop[1]), src_atr + nLoss) : iff_1
+    xATRTrailingStop := src_atr > nz(xATRTrailingStop[1], 0) and src_atr[1] > nz(xATRTrailingStop[1], 0) ? math.max(nz(xATRTrailingStop[1]), src_atr - nLoss) : iff_2
+    
+    pos = 0.0
+    
+    iff_3 = src_atr[1] > nz(xATRTrailingStop[1], 0) and src_atr < nz(xATRTrailingStop[1], 0) ? -1 : nz(pos[1], 0)
+    pos := src_atr[1] < nz(xATRTrailingStop[1], 0) and src_atr > nz(xATRTrailingStop[1], 0) ? 1 : iff_3
+    
+    xATRTrailingStop
+    
+enableAtr1 = input(defval=true, title='Use ATR', group="ATR Options 1")
+exit_by_first = input.bool(defval=false, title='Exit By First ATR')
+
+tf1 = input.timeframe(title="First Timeframe", defval="5")
+
+smoothing1 = input.string(title="Smoothing ATR", defval="RMA", options=["RMA", "SMA", "EMA", "WMA"])
+nATRPeriod1 = input(20, title='ATR Period')
+nATRMultip1 = input(2, title='ATR Multiplier')
+
+
+atr_money_first = request.security(syminfo.tickerid, tf1 , atrMoneyMiner(nATRPeriod1, nATRMultip1, smoothing1),  lookahead=barmerge.lookahead_on)
+
+
+tf1_src = request.security(syminfo.tickerid, tf1 , src_atr,  lookahead=barmerge.lookahead_on)
+
+
+// ###
+// ###
+// ###
+
+enableAtr2 = input(defval=false, title='Use ATR', group="ATR Options 2")
+exit_by_second = input.bool(defval=false, title='Exit By Second ATR')
+
+tf2 = input.timeframe(title="Second Timeframe", defval="15")
+
+smoothing2 = input.string(title="Smoothing ATR", defval="RMA", options=["RMA", "SMA", "EMA", "WMA"])
+nATRPeriod2 = input(20, title='ATR Period')
+nATRMultip2 = input(2, title='ATR Multiplier')
+
+
+
+atr_money_second = request.security(syminfo.tickerid, tf2 , atrMoneyMiner(nATRPeriod2, nATRMultip2, smoothing2),  lookahead=barmerge.lookahead_on)
+
+
+tf2_src = request.security(syminfo.tickerid, tf2 , src_atr,  lookahead=barmerge.lookahead_on)
+
+
+// ###
+// ###
+// ###
+
+enableAtr3 = input(defval=false, title='Use ATR', group="ATR Options 3")
+exit_by_third = input.bool(defval=false, title='Exit By Third ATR')
+
+tf3 = input.timeframe(title="Third Timeframe", defval="30")
+
+smoothing3 = input.string(title="Smoothing ATR", defval="RMA", options=["RMA", "SMA", "EMA", "WMA"])
+nATRPeriod3 = input(20, title='ATR Period')
+nATRMultip3 = input(2, title='ATR Multiplier')
+
+
+atr_money_third = request.security(syminfo.tickerid, tf3 , atrMoneyMiner(nATRPeriod3, nATRMultip3, smoothing3),  lookahead=barmerge.lookahead_on)
+
+
+tf3_src = request.security(syminfo.tickerid, tf3 , src_atr,  lookahead=barmerge.lookahead_on)
+
+// ###
+// ###
+// ###
+
+enableAtr4 = input(defval=false, title='Use ATR', group="ATR Options 4")
+exit_by_forth = input.bool(defval=false, title='Exit By Forth ATR')
+
+tf4 = input.timeframe(title="Forth Timeframe", defval="60")
+
+smoothing4 = input.string(title="Smoothing ATR", defval="RMA", options=["RMA", "SMA", "EMA", "WMA"])
+nATRPeriod4 = input(20, title='ATR Period')
+nATRMultip4 = input(2, title='ATR Multiplier')
+
+
+atr_money_forth = request.security(syminfo.tickerid, tf4 , atrMoneyMiner(nATRPeriod4, nATRMultip4, smoothing4),  lookahead=barmerge.lookahead_on)
+
+
+tf4_src = request.security(syminfo.tickerid, tf4 , src_atr,  lookahead=barmerge.lookahead_on)
+
+
+// ###
+// ###
+// ###
+
+enableAtr5 = input(defval=false, title='Use ATR', group="ATR Options 5")
+exit_by_fifth = input.bool(defval=false, title='Exit By Fifth ATR')
+
+tf5 = input.timeframe(title="Fifth Timeframe", defval="120")
+
+smoothing5 = input.string(title="Smoothing ATR", defval="RMA", options=["RMA", "SMA", "EMA", "WMA"])
+nATRPeriod5 = input(20, title='ATR Period')
+nATRMultip5 = input(2, title='ATR Multiplier')
+
+
+atr_money_fifth = request.security(syminfo.tickerid, tf5 , atrMoneyMiner(nATRPeriod5, nATRMultip5, smoothing5),  lookahead=barmerge.lookahead_on)
+
+
+tf5_src = request.security(syminfo.tickerid, tf5 , src_atr,  lookahead=barmerge.lookahead_on)
+
+
+// ###
+// ###
+// ###
+
+enableAtr6 = input(defval=false, title='Use ATR', group="ATR Options 6")
+exit_by_sixth = input.bool(defval=false, title='Exit By Sixth ATR')
+
+tf6 = input.timeframe(title="Sixth Timeframe", defval="240")
+
+smoothing6 = input.string(title="Smoothing ATR", defval="RMA", options=["RMA", "SMA", "EMA", "WMA"])
+nATRPeriod6 = input(20, title='ATR Period')
+nATRMultip6 = input(2, title='ATR Multiplier')
+
+
+atr_money_sixth = request.security(syminfo.tickerid, tf6 , atrMoneyMiner(nATRPeriod6, nATRMultip6, smoothing6),  lookahead=barmerge.lookahead_on)
+
+
+tf6_src = request.security(syminfo.tickerid, tf6, src_atr,  lookahead=barmerge.lookahead_on)
+
+
+
+    
+str_to_int(tf) =>
+    iff_1 = tf == '1W' ? 10080 : 0
+    iff_2 = tf == '1D' ? 1440 : iff_1
+    iff_3 = tf == '480' ? 480 : iff_2
+    iff_4 = tf == '240' ? 240 : iff_3
+    iff_5 = tf == '180' ? 180 : iff_4
+    iff_6 = tf == '120' ? 120 : iff_5
+    iff_7 = tf == '60' ? 60 : iff_6
+    iff_8 = tf == '30' ? 30 : iff_7
+    iff_9 = tf == '15' ? 15 : iff_8
+    iff_10 = tf == '5' ? 5 : iff_9
+    int_val = tf == '1' ? 1 : iff_10
+    int_val
+
+sync_tfs(tf, base_tf) =>
+    synced_tf = str_to_int(tf) / str_to_int(base_tf)
+    synced_tf
+
+
+
+
+
+back_num_2 = sync_tfs(tf2, tf1)
+back_num_3 = sync_tfs(tf3, tf1)
+back_num_4 = sync_tfs(tf4, tf1)
+back_num_5 = sync_tfs(tf5, tf1)
+back_num_6 = sync_tfs(tf6, tf1)
+
+
+
+downwardStrategy2 = enableAtr2 ? ta.barssince(tf2_src > atr_money_second)[back_num_2 - 1] : 1
+downwardStrategy3 = enableAtr3 ? ta.barssince(tf3_src > atr_money_third)[back_num_3 - 1] : 1
+downwardStrategy4 = enableAtr4 ? ta.barssince(tf4_src > atr_money_forth)[back_num_4 - 1] : 1
+downwardStrategy5 = enableAtr5 ? ta.barssince(tf5_src > atr_money_fifth)[back_num_5 - 1] : 1
+downwardStrategy6 = enableAtr6 ? ta.barssince(tf6_src > atr_money_sixth)[back_num_6 - 1] : 1
+
+upwardStrategy2 = enableAtr2 ? ta.barssince(tf2_src < atr_money_second)[back_num_2 - 1] : 1
+upwardStrategy3 = enableAtr3 ? ta.barssince(tf3_src < atr_money_third)[back_num_3 - 1] : 1
+upwardStrategy4 = enableAtr4 ? ta.barssince(tf4_src < atr_money_forth)[back_num_4 - 1] : 1
+upwardStrategy5 = enableAtr5 ? ta.barssince(tf5_src < atr_money_fifth)[back_num_5 - 1] : 1
+upwardStrategy6 = enableAtr6 ? ta.barssince(tf6_src < atr_money_sixth)[back_num_6 - 1]  : 1
+
+
+
+
+downwardStrategyEntry2 = enableAtr2 ? ta.barssince(tf2_src > atr_money_second) : 1
+downwardStrategyEntry3 = enableAtr3 ? ta.barssince(tf3_src > atr_money_third) : 1
+downwardStrategyEntry4 = enableAtr4 ? ta.barssince(tf4_src > atr_money_forth) : 1
+downwardStrategyEntry5 = enableAtr5 ? ta.barssince(tf5_src > atr_money_fifth) : 1
+downwardStrategyEntry6 = enableAtr6 ? ta.barssince(tf6_src > atr_money_sixth) : 1
+
+upwardStrategyEntry2 = enableAtr2 ? ta.barssince(tf2_src < atr_money_second) : 1
+upwardStrategyEntry3 = enableAtr3 ? ta.barssince(tf3_src < atr_money_third) : 1
+upwardStrategyEntry4 = enableAtr4 ? ta.barssince(tf4_src < atr_money_forth) : 1
+upwardStrategyEntry5 = enableAtr5 ? ta.barssince(tf5_src < atr_money_fifth) : 1
+upwardStrategyEntry6 = enableAtr6 ? ta.barssince(tf6_src < atr_money_sixth) : 1
+
+
+buy_entry_limit = 0.0
+sell_entry_limit = 0.0
+
+var bool set_buy_limit = na
+var bool set_sell_limit = na
+
+var float buy_entry_limit_holder = 0.0
+var float sell_entry_limit_holder = 0.0
+
+
+
+if enableAtr1 and (second_entry_method ? ta.barssince(tf1_src < atr_money_first) >= 1 : ta.barssince(tf1_src < atr_money_first) == 1) and upwardStrategyEntry2 >= 1 and upwardStrategyEntry3 >= 1 and upwardStrategyEntry4 >= 1 and upwardStrategyEntry5 >= 1 and upwardStrategyEntry6 >= 1
+    
+    buy_entry_limit := close
+    
+if enableAtr1 and (second_entry_method ? ta.barssince(tf1_src > atr_money_first) >= 1 : ta.barssince(tf1_src > atr_money_first) == 1)  and downwardStrategyEntry2 >= 1 and downwardStrategyEntry3 >= 1 and downwardStrategyEntry4 >= 1 and downwardStrategyEntry5 >= 1 and downwardStrategyEntry6 >= 1
+    sell_entry_limit := close
+
+if buy_entry_limit[1] == 0
+    buy_entry_limit_holder := buy_entry_limit
+    set_buy_limit := true
+    set_sell_limit := false
+    
+if sell_entry_limit[1] == 0
+    sell_entry_limit_holder := sell_entry_limit
+    set_buy_limit := false
+    set_sell_limit := true    
+
+
+
+exit_by_buy_1 = exit_by_first and enableAtr1 ? ta.barssince(tf1_src > atr_money_first) == 1 == 1 : false
+exit_by_buy_2 = exit_by_second and enableAtr2  ? ta.barssince(tf2_src > atr_money_second)[back_num_2 - 1]  == 1 : false
+exit_by_buy_3 = exit_by_third and enableAtr3 ? ta.barssince(tf3_src > atr_money_third)[back_num_3 - 1]  == 1 : false
+exit_by_buy_4 = exit_by_forth and enableAtr4 ? ta.barssince(tf4_src > atr_money_forth)[back_num_4 - 1]  == 1 : false
+exit_by_buy_5 = exit_by_fifth and enableAtr5 ? ta.barssince(tf5_src > atr_money_fifth)[back_num_5 - 1]  == 1 : false
+exit_by_buy_6 = exit_by_sixth  and enableAtr6 ? ta.barssince(tf6_src > atr_money_sixth)[back_num_6 - 1]  == 1 : false
+
+
+
+exit_by_sell_1 = exit_by_first and enableAtr1 ? ta.barssince(tf1_src < atr_money_first) == 1 == 1 : false
+exit_by_sell_2 = exit_by_second and enableAtr2 ? ta.barssince(tf2_src < atr_money_second)[back_num_2 - 1] == 1 : false
+exit_by_sell_3 = exit_by_third and enableAtr3 ? ta.barssince(tf3_src < atr_money_third)[back_num_3 - 1]  == 1 : false
+exit_by_sell_4 = exit_by_forth and enableAtr4 ? ta.barssince(tf4_src < atr_money_forth)[back_num_4 - 1]  == 1 : false
+exit_by_sell_5 = exit_by_fifth and enableAtr5 ? ta.barssince(tf5_src < atr_money_fifth)[back_num_5 - 1]  == 1 : false
+exit_by_sell_6 = exit_by_sixth and enableAtr6 ? ta.barssince(tf6_src < atr_money_sixth)[back_num_6 - 1]  == 1 : false
+
+
+longExitPrice  = strategy.position_avg_price * (1 + profitPerc)
+shortExitPrice = strategy.position_avg_price * (1 - profitPerc)
+
+
+longExitPriceSL  = strategy.position_avg_price * (1 - lossPerc)
+shortExitPriceSL = strategy.position_avg_price * (1 + lossPerc)
+
+if (strategy.position_size > 0)
+
+    strategy.exit(id="Long TP/SL", limit=longExitPrice, comment_loss='Long SL', comment_profit='Long TP', stop=longExitPriceSL)
+
+    
+if (strategy.position_size < 0)
+    strategy.exit(id="Short TP/SL", limit=shortExitPrice, comment_loss='Short SL', comment_profit='Short TP', stop=shortExitPriceSL)
+
+
+
+
+enter_long_pos = bool(na)
+enter_short_pos = bool(na)
+
+if ta.barssince(tf1_src < atr_money_first) >= 1 and upwardStrategy2[1] >= 1 and upwardStrategy3[1] >= 1 and upwardStrategy4[1] >= 1 and upwardStrategy5[1] >= 1 and upwardStrategy6[1] >= 1
+    enter_long_pos := true
+    enter_short_pos := false
+
+if ta.barssince(tf1_src > atr_money_first) >= 1 and downwardStrategy2[1] >= 1 and downwardStrategy3[1] >= 1 and downwardStrategy4[1] >= 1 and downwardStrategy5[1] >= 1 and downwardStrategy6[1] >= 1
+    enter_long_pos := false
+    enter_short_pos := true
+
+
+
+
+if enableAtr1 and (second_entry_method ? single_entry ? (ta.barssince(tf1_src < atr_money_first) >= 1 and ta.barssince(enter_long_pos) > 0) or ta.barssince(tf1_src < atr_money_first) == 1 : ta.barssince(tf1_src < atr_money_first) >= 1 : ta.barssince(tf1_src < atr_money_first) == 1)  and upwardStrategy2 >= 1 and upwardStrategy3 >= 1 and upwardStrategy4 >= 1 and upwardStrategy5 >= 1 and upwardStrategy6 >= 1
+    
+    set_buy_limit := false
+    set_sell_limit := true
+    
+    if reverse_signal
+        strategy.entry("Enter Short", strategy.short, limit=limit_entry ? buy_entry_limit_holder : na) // enter short by market if current open less then previous low
+    else
+        strategy.entry("Enter Long", strategy.long, limit=limit_entry ? buy_entry_limit_holder : na) // enter long by market if current open great then previous high
+        
+if enableAtr1 and (exit_by_buy_1 or exit_by_buy_2 or exit_by_buy_3 or exit_by_buy_4 or exit_by_buy_5 or exit_by_buy_6) and (enableAtr2 or enableAtr3 or enableAtr4 or enableAtr5 or enableAtr6)
+    if reverse_signal
+        strategy.close("Enter Short", 'Short Pos Closed') // enter long by market if current open great then previous high
+
+    else
+        strategy.close("Enter Long", 'Long Pos Closed') // enter long by market if current open great then previous high
+    
+
+if enableAtr1 and (second_entry_method ? single_entry ? (ta.barssince(tf1_src > atr_money_first) >= 1 and ta.barssince(enter_short_pos) > 0) or ta.barssince(tf1_src > atr_money_first) == 1 : ta.barssince(tf1_src > atr_money_first) >= 1 : ta.barssince(tf1_src > atr_money_first) == 1)  and downwardStrategy2 >= 1 and downwardStrategy3 >= 1 and downwardStrategy4 >= 1 and downwardStrategy5 >= 1 and downwardStrategy6 >= 1
+
+    set_buy_limit := true
+    set_sell_limit := false
+    
+    if reverse_signal
+        strategy.entry("Enter Long", strategy.long, limit=limit_entry ? sell_entry_limit_holder : na) // enter long by market if current open great then previous high
+    else
+        strategy.entry("Enter Short", strategy.short, limit=limit_entry ? sell_entry_limit_holder : na) // enter short by market if current open less then previous low
+    
+if enableAtr1 and (exit_by_sell_1 or exit_by_sell_2 or exit_by_sell_3 or exit_by_sell_4 or exit_by_sell_5 or exit_by_sell_6) and (enableAtr2 or enableAtr3 or enableAtr4 or enableAtr5 or enableAtr6)
+
+    if reverse_signal
+        strategy.close("Enter Long", 'Long Pos Closed') // enter long by market if current open great then previous high
+    else
+        strategy.close("Enter Short", 'Short Pos Closed') // enter long by market if current open great then previous high
+
+
+
+heatmap_color(cond1, cond2) =>
+    cond1 > cond2 ? color.new(color.green, 20) : cond2 > cond1 ? color.new(color.red, 20) : na
+
+lapos_x = timenow + math.round(ta.change(time) * 3)
+lapos_y = ta.highest(5)  // + (0.15 * highest(20))
+
+// Displays the timeframe labels at the right    
+f_draw_label(x, y, _text, _textcolor, _size, useLabel) =>
+    if useLabel
+        var label Label = na
+        label.delete(Label)
+        Label := label.new(x, y, _text, color=color.new(color.white, 20), textcolor=_textcolor, style=label.style_none, yloc=yloc.price, xloc=xloc.bar_time, size=_size)
+        Label
+    else
+        na
+        
+// Display the labels in a more readable way
+// If timeframe selected is "Same as symbol" displays the timeframe.period string value
+res_to_string(res) =>
+    iff_1 = res == '1W' ? 'Weekly' : timeframe.period
+    iff_2 = res == '1D' ? 'Daily' : iff_1
+    iff_3 = res == '480' ? '8H' : iff_2
+    iff_4 = res == '240' ? '4H' : iff_3
+    iff_5 = res == '180' ? '3H' : iff_4
+    iff_6 = res == '120' ? '2H' : iff_5
+    iff_7 = res == '60' ? '1H' : iff_6
+    iff_8 = res == '30' ? '30Min' : iff_7
+    iff_9 = res == '15' ? '15Min' : iff_8
+    iff_10 = res == '5' ? '5Min' : iff_9
+    str = res == '1' ? '1Min' : iff_10
+    str
+
+
+
+
+h0 = hline(1, color=color.new(color.white, 10), linewidth=2, linestyle=hline.style_solid, display=enableAtr1 ? display.all : display.none)
+h1 = hline(2, color=color.new(color.white, 10), linewidth=2, linestyle=hline.style_solid, display=enableAtr1 or enableAtr2 ? display.all : display.none)
+h2 = hline(3, color=color.new(color.white, 10), linewidth=2, linestyle=hline.style_solid, display=enableAtr2 or enableAtr3 ? display.all : display.none)
+h3 = hline(4, color=color.new(color.white, 10), linewidth=2, linestyle=hline.style_solid, display=enableAtr3 or enableAtr4 ? display.all : display.none)
+h4 = hline(5, color=color.new(color.white, 10), linewidth=2, linestyle=hline.style_solid, display=enableAtr4 or enableAtr5 ? display.all : display.none)
+h5 = hline(6, color=color.new(color.white, 10), linewidth=2, linestyle=hline.style_solid, display=enableAtr5 or enableAtr6 ? display.all : display.none)
+h6 = hline(7, color=color.new(color.white, 10), linewidth=2, linestyle=hline.style_solid, display=enableAtr6 ? display.all : display.none)
+
+
+
+// draw the TF labels
+f_draw_label(lapos_x, 1, res_to_string(tf1), color.white, size.large, enableAtr1)
+f_draw_label(lapos_x, 2, res_to_string(tf2), color.white, size.large, enableAtr2)
+f_draw_label(lapos_x, 3, res_to_string(tf3), color.white, size.large, enableAtr3)
+f_draw_label(lapos_x, 4, res_to_string(tf4), color.white, size.large, enableAtr4)
+f_draw_label(lapos_x, 5, res_to_string(tf5), color.white, size.large, enableAtr5)
+f_draw_label(lapos_x, 6, res_to_string(tf6), color.white, size.large, enableAtr6)
+
+
+// Draw the green/red heatmap raws
+fill(h0, h1, color=heatmap_color(tf1_src, atr_money_first) ,transp=90, display=enableAtr1 ? display.all : display.none)
+fill(h1, h2, color=heatmap_color(tf2_src, atr_money_second)[back_num_2 - 1], transp=90, display=enableAtr2 ? display.all : display.none)
+fill(h2, h3, color=heatmap_color(tf3_src, atr_money_third)[back_num_3 - 1], transp=90, display=enableAtr3 ? display.all : display.none)
+fill(h3, h4, color=heatmap_color(tf4_src, atr_money_forth)[back_num_4 - 1], transp=90, display=enableAtr4 ? display.all : display.none)
+fill(h4, h5, color=heatmap_color(tf5_src, atr_money_fifth)[back_num_5 - 1], transp=90, display=enableAtr5 ? display.all : display.none)
+fill(h5, h6, color=heatmap_color(tf6_src, atr_money_sixth)[back_num_6 - 1], transp=90, display=enableAtr6 ? display.all : display.none)
+
