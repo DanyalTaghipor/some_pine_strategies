@@ -1,0 +1,606 @@
+//@version=5
+strategy("Multi TF HH/LL | HL/LH Strategy Diff", overlay=false, max_labels_count=500, process_orders_on_close=true, default_qty_type=strategy.percent_of_equity, default_qty_value=100, currency=currency.USD, commission_value=0.1, initial_capital=1000)
+
+// ############################## Start Of Range Filter ##############################
+
+// Source
+
+src = close
+
+// Sampling Period
+// Settings for 5min chart, BTCUSDC. For Other coin, change the paremeters
+
+per = input.int(defval=100, minval=1, title='Sampling Period')
+
+// Range Multiplier
+
+mult = input.float(defval=3.0, minval=0.1, title='Range Multiplier')
+
+
+use_rf = input.bool(defval=false, title="Use RF As Confirmation ?", inline="RF")
+
+rf_tooltip="Normal: Confirms Buy Signals If Buy (High) Pivots Are Below Long RF And Confirms Sell Signals If Sell (Low) Pivots Are Above Short RF. \n\nReverse: Confirms Buy Signals If Buy (High) Pivots Are Above Long RF And Confirms Sell Signals If Sell (Low) Pivots Are Below Short RF. \n\nBoth: Confirms Buy (High) Pivots If RF Status Is Long And Confirms Sell (Low) Pivots If RF Status Is Short."
+
+rf_type  = input.string("Normal", options=["Normal", "Reverse", "Both"], title="", tooltip=rf_tooltip, inline="RF")
+
+
+
+// Smooth Average Range
+
+smoothrng(x, t, m) =>
+    wper = t * 2 - 1
+    avrng = ta.ema(math.abs(x - x[1]), t)
+    smoothrng = ta.ema(avrng, wper) * m
+    smoothrng
+smrng = smoothrng(src, per, mult)
+
+// Range Filter
+
+rngfilt(x, r) =>
+    rngfilt = x
+    rngfilt := x > nz(rngfilt[1]) ? x - r < nz(rngfilt[1]) ? nz(rngfilt[1]) : x - r : x + r > nz(rngfilt[1]) ? nz(rngfilt[1]) : x + r
+    rngfilt
+filt = rngfilt(src, smrng)
+
+// Filter Direction
+
+upward = 0.0
+upward := filt > filt[1] ? nz(upward[1]) + 1 : filt < filt[1] ? 0 : nz(upward[1])
+downward = 0.0
+downward := filt < filt[1] ? nz(downward[1]) + 1 : filt > filt[1] ? 0 : nz(downward[1])
+
+// Break Outs
+
+longCond = bool(na)
+shortCond = bool(na)
+longCond := src > filt and src > src[1] and upward > 0 or src > filt and src < src[1] and upward > 0
+shortCond := src < filt and src < src[1] and downward > 0 or src < filt and src > src[1] and downward > 0
+
+CondIni = 0
+CondIni := longCond ? 1 : shortCond ? -1 : CondIni[1]
+longCondition = longCond and CondIni[1] == -1
+shortCondition = shortCond and CondIni[1] == 1
+
+
+var long_rf = bool(na)
+var short_rf = bool(na)
+
+
+if longCondition
+    long_rf := true
+    short_rf := false
+
+if shortCondition
+    long_rf := false
+    short_rf := true
+
+
+// ############################## End Of Range Filter ##############################
+
+use_close_diff = input.bool(defval=false, title="Use Data Diff As Source Pivots ?", group="Source Settings")
+
+use_ma = input.bool(defval=false, title="Use MA Source Pivots ?")
+
+use_ma_diff = input.bool(defval=false, title="Use MA Diff As Source Pivots ?")
+
+ma_method_diff = input.string(title="MA Method", defval="RMA", options=["RMA", "SMA", "EMA", "ALMA", "WMA"])
+
+ma_lenght_diff = input(20, title='MA Lenght')
+
+alma_offset = input.float(title="ALMA Offset", defval=0.8)
+
+alma_sigma = input.float(title="ALMA Sigma", defval=0.5)
+
+
+
+use_threshold_static = input.bool(defval=false, title="Use Threshold Static ?", group="Thrshold Settings")
+
+upper_threshold = input.float(20, title="Upper Threshold")
+lower_threshold = input.float(20, title='Lower Threshold')
+
+
+use_threshold_dyn = input.bool(defval=false, title="Use Threshold Dynamic ?")
+use_window = input.bool(defval=false, title="Use Threshold Window ?", inline="window")
+threshold_window = input.int(20, title="", inline="window")
+
+ma_function(source, length, smoothing) =>
+	switch smoothing
+		"RMA" => ta.rma(source, length)
+		"SMA" => ta.sma(source, length)
+		"EMA" => ta.ema(source, length)
+        "ALMA" => ta.alma(source, length, alma_offset, alma_sigma)
+		=> ta.wma(source, length)
+
+
+
+profitPerc = input.float(title="Take Profit (%)", minval=0, step=1, defval=3, group='TP/SL') / 100
+lossPerc = input.float(title="Stop Loss (%)",  minval=0, step=1, defval=3) / 100
+
+window_lookback_entry = input.int(title="Look-back Window Size (Entry)", defval=0, group="Strategy Options")
+
+enable_barssince = input.bool(defval=true, title="Enable Barssince?")
+
+use_window_lookback_exit = input.bool(defval=true, title='Use Look-back Window Exit ?')
+
+window_lookback_exit = input.int(title="Look-back Window Size (Exit)", defval=0)
+
+
+use_1 = input.bool(defval=true, title='Use First ?', group="LENGTH LEFT / RIGHT 1")
+exit_1 = input.bool(defval=true, title='Exit By First ?', group="LENGTH LEFT / RIGHT 1")
+
+tf_1 = input.timeframe("5",  title="First Timeframe")
+left_len_1 = input.int(title="Pivot 1", defval=10, minval=1, inline="Pivot 1")
+right_len_1 = input.int(title="/", defval=0, minval=0, inline="Pivot 1")
+
+
+use_2 = input.bool(defval=false, title='Use Second ?', group="LENGTH LEFT / RIGHT 2")
+exit_2 = input.bool(defval=true, title='Exit By Second ?', group="LENGTH LEFT / RIGHT 2")
+
+tf_2 = input.timeframe("15",  title="Second Timeframe")
+left_len_2 = input.int(title="Pivot 2", defval=10, minval=1, inline="Pivot 2")
+right_len_2 = input.int(title="/", defval=0, minval=0, inline="Pivot 2")
+
+
+use_3 = input.bool(defval=false, title='Use Third ?', group="LENGTH LEFT / RIGHT 3")
+exit_3 = input.bool(defval=true, title='Exit By Third ?', group="LENGTH LEFT / RIGHT 3")
+
+tf_3 = input.timeframe("30",  title="Third Timeframe")
+left_len_3 = input.int(title="Pivot 3", defval=10, minval=1, inline="Pivot 3")
+right_len_3 = input.int(title="/", defval=0, minval=0, inline="Pivot 3")
+
+
+use_4 = input.bool(defval=false, title='Use Forth ?', group="LENGTH LEFT / RIGHT 4")
+exit_4 = input.bool(defval=true, title='Exit By Forth ?', group="LENGTH LEFT / RIGHT 4")
+
+tf_4 = input.timeframe("60",  title="Forth Timeframe")
+left_len_4 = input.int(title="Pivot 4", defval=10, minval=1, inline="Pivot 4")
+right_len_4 = input.int(title="/", defval=0, minval=0, inline="Pivot 4")
+
+
+use_5 = input.bool(defval=false, title='Use Fifth ?', group="LENGTH LEFT / RIGHT 5")
+exit_5 = input.bool(defval=true, title='Exit By Fifth ?', group="LENGTH LEFT / RIGHT 5")
+
+tf_5 = input.timeframe("120",  title="Fifth Timeframe")
+left_len_5 = input.int(title="Pivot 5", defval=10, minval=1, inline="Pivot 5")
+right_len_5 = input.int(title="/", defval=0, minval=0, inline="Pivot 5")
+
+
+use_6 = input.bool(defval=false, title='Use Sixth ?', group="LENGTH LEFT / RIGHT 6")
+exit_6 = input.bool(defval=true, title='Exit By Sixth ?', group="LENGTH LEFT / RIGHT 6")
+
+tf_6 = input.timeframe("240",  title="Sixth Timeframe")
+left_len_6 = input.int(title="Pivot 6", defval=10, minval=1, inline="Pivot 6")
+right_len_6 = input.int(title="/", defval=0, minval=0, inline="Pivot 6")
+
+
+
+var ph_arr_1 = array.new_float(na)
+var pl_arr_1 = array.new_float(na)
+
+var ph_arr_2 = array.new_float(na)
+var pl_arr_2 = array.new_float(na)
+
+var ph_arr_3 = array.new_float(na)
+var pl_arr_3 = array.new_float(na)
+
+var ph_arr_4 = array.new_float(na)
+var pl_arr_4 = array.new_float(na)
+
+var ph_arr_5 = array.new_float(na)
+var pl_arr_5 = array.new_float(na)
+
+var ph_arr_6 = array.new_float(na)
+var pl_arr_6 = array.new_float(na)
+
+
+var diff_array_1_h = array.new_float(na)
+var diff_array_2_h = array.new_float(na)
+var diff_array_3_h = array.new_float(na)
+var diff_array_4_h = array.new_float(na)
+var diff_array_5_h = array.new_float(na)
+var diff_array_6_h = array.new_float(na)
+
+var diff_array_1_l = array.new_float(na)
+var diff_array_2_l = array.new_float(na)
+var diff_array_3_l = array.new_float(na)
+var diff_array_4_l = array.new_float(na)
+var diff_array_5_l = array.new_float(na)
+var diff_array_6_l = array.new_float(na)
+
+    
+str_to_int(tf) =>
+    iff_1 = tf == '1W' ? 10080 : 0
+    iff_2 = tf == '1D' ? 1440 : iff_1
+    iff_3 = tf == '480' ? 480 : iff_2
+    iff_4 = tf == '240' ? 240 : iff_3
+    iff_5 = tf == '180' ? 180 : iff_4
+    iff_6 = tf == '120' ? 120 : iff_5
+    iff_7 = tf == '60' ? 60 : iff_6
+    iff_8 = tf == '30' ? 30 : iff_7
+    iff_9 = tf == '15' ? 15 : iff_8
+    iff_10 = tf == '5' ? 5 : iff_9
+    iff_11 = tf == '3' ? 3 : iff_10
+    int_val = tf == '1' ? 1 : iff_11
+    int_val
+
+sync_tfs(tf, base_tf) =>
+    synced_tf = str_to_int(tf) / str_to_int(base_tf)
+    synced_tf
+
+
+back_num_2 = sync_tfs(tf_2, tf_1)
+back_num_3 = sync_tfs(tf_3, tf_1)
+back_num_4 = sync_tfs(tf_4, tf_1)
+back_num_5 = sync_tfs(tf_5, tf_1)
+back_num_6 = sync_tfs(tf_6, tf_1)  
+
+
+calc_threshold_dynamic(data, diff_data_arr, use_window_thr, thr_window) =>
+
+    src_diff = data - data[1]
+    array.push(diff_data_arr, src_diff)
+    avg_diff_array = array.avg(diff_data_arr)
+    diff_value = use_window_thr ? ta.stdev(src_diff, thr_window) : array.stdev(diff_data_arr) 
+
+    [avg_diff_array, diff_value]
+
+calc_ph_pl(left_len, right_len, use_pivot, tf, ph_arr, pl_arr, diff_array_h, diff_array_l ,back_num=0) =>
+    
+    up_thresh = float(na)
+    down_thresh = float(na)
+
+    src_pivot_diff_high = ma_function(high, ma_lenght_diff, ma_method_diff)
+    src_pivot_diff_low =  ma_function(low, ma_lenght_diff, ma_method_diff)
+    
+    src_ph = use_ma ? src_pivot_diff_high : use_ma_diff ? src_pivot_diff_high - src_pivot_diff_high[1] : use_close_diff ? high - high[1] : high
+    src_pl = use_ma ? src_pivot_diff_low : use_ma_diff ? src_pivot_diff_low - src_pivot_diff_low[1] : use_close_diff ? low - low[1] : low
+
+
+    ph = request.security(syminfo.tickerid, tf , ta.pivothigh(src_ph, left_len, right_len), lookahead=barmerge.lookahead_on)[back_num != 0 ? back_num - 1 : back_num]
+
+    pl = request.security(syminfo.tickerid, tf , ta.pivotlow(src_pl, left_len, right_len), lookahead=barmerge.lookahead_on)[back_num != 0  ? back_num - 1 : back_num]
+    
+    diff_src_h = request.security(syminfo.tickerid, tf, use_ma_diff ? src_pivot_diff_high : use_close_diff ? high : na, lookahead = barmerge.lookahead_on)
+    diff_src_l = request.security(syminfo.tickerid, tf, use_ma_diff ? src_pivot_diff_low : use_close_diff ? low : na, lookahead = barmerge.lookahead_on)
+
+    if use_pivot
+
+        if use_ma_diff
+
+            src_diff_h = diff_src_h[back_num != 0  ? back_num - 1 : 0] - diff_src_h[back_num != 0  ? back_num + back_num  - 1 : 1]
+            src_diff_l = diff_src_l[back_num != 0  ? back_num  - 1 : 0] - diff_src_l[back_num != 0  ? back_num + back_num  - 1 : 1]
+
+            array.push(diff_array_h, src_diff_h)
+            array.push(diff_array_l, src_diff_l)
+
+            avg_diff_array_h = array.avg(diff_array_h)
+            avg_diff_array_l = array.avg(diff_array_l)
+
+            diff_value_h = use_window ? ta.stdev(src_diff_h, threshold_window) : array.stdev(diff_array_h) 
+            diff_value_l = use_window ? ta.stdev(src_diff_l, threshold_window) : array.stdev(diff_array_l) 
+
+
+            up_thresh := use_threshold_dyn ? avg_diff_array_h + diff_value_h : use_threshold_static ? upper_threshold : float(na)
+            down_thresh := use_threshold_dyn ? avg_diff_array_l - diff_value_l : use_threshold_static ? -lower_threshold : float(na)
+            
+        else if use_close_diff
+            src_diff_h = diff_src_h[back_num != 0  ? back_num - 1 : 0] - diff_src_h[back_num != 0  ? back_num + back_num  - 1 : 1]
+            src_diff_l = diff_src_l[back_num != 0  ? back_num  - 1 : 0] - diff_src_l[back_num != 0  ? back_num + back_num  - 1 : 1]
+
+
+            array.push(diff_array_h, src_diff_h)
+            array.push(diff_array_l, src_diff_l)
+
+            avg_diff_array_h = array.avg(diff_array_h)
+            avg_diff_array_l = array.avg(diff_array_l)
+
+            diff_value_h = use_window ? ta.stdev(src_diff_h, threshold_window) : array.stdev(diff_array_h) 
+            diff_value_l = use_window ? ta.stdev(src_diff_l, threshold_window) : array.stdev(diff_array_l) 
+            
+            up_thresh := use_threshold_dyn ? avg_diff_array_h + diff_value_h : use_threshold_static ? upper_threshold : float(na)
+            down_thresh := use_threshold_dyn ? avg_diff_array_l - diff_value_l : use_threshold_static ? -lower_threshold : float(na)
+        
+
+        
+        array.push(ph_arr, ph)
+
+        array.push(pl_arr, pl)
+        
+        [ph, pl, up_thresh, down_thresh]
+    
+    else
+    
+        [na, na, na, na]
+
+
+
+
+
+send_signal(pivot_main, pivot_main_vals, pivot_minor, use_pivots, type_rf, look_back) =>
+    
+    if use_pivots and barstate.isconfirmed
+    
+        res = bool(false)
+        
+        rf_status = type_rf ==  "L" ? long_rf : type_rf ==  "S" ? short_rf : false
+        
+        for x=0 to look_back
+            
+            if use_rf
+            
+                if rf_status
+                    
+                    if array.size(pivot_main_vals) > look_back + 1
+                        
+                        if type_rf ==  "L"
+                            
+                            if na(array.get(pivot_main_vals, array.size(pivot_main_vals) - x - 1)) and not na(array.get(pivot_main_vals, array.size(pivot_main_vals) - x - 2))
+                                
+                                if rf_type == "Both"
+                                
+                                    res := true
+                                    break
+                                    
+                                
+                                else if rf_type == "Normal"
+                                
+                                    if array.get(pivot_main_vals, array.size(pivot_main_vals) - x - 2) < filt
+                                        
+                                        res := true
+                                        break
+                                            
+                                    else
+                                        res := false
+                                        
+                                else if rf_type == "Reverse"
+                                    
+                                    if array.get(pivot_main_vals, array.size(pivot_main_vals) - x - 2) > filt
+                                            
+                                        res := true
+                                        break
+                                                
+                                    else
+                                        res := false
+                                            
+                                            
+                        else if type_rf == "S"
+                        
+                            if na(array.get(pivot_main_vals, array.size(pivot_main_vals) - x - 1)) and not na(array.get(pivot_main_vals, array.size(pivot_main_vals) - x - 2))
+                            
+                                if rf_type == "Both"
+                                    
+                                    res := true
+                                    break
+                                    
+                                else if rf_type == "Normal"
+                                
+                                    if array.get(pivot_main_vals, array.size(pivot_main_vals) - x - 2) > filt
+                                            
+                                        res := true
+                                        break
+                                        
+                                    else
+                                        res := false
+                                        
+                                else if rf_type == "Reverse"
+                                
+                                    if array.get(pivot_main_vals, array.size(pivot_main_vals) - x - 2) < filt
+                                                                
+                                        res := true
+                                        break
+                                        
+                                    else
+                                        res := false
+                else
+                    false
+                
+            else
+            
+                if enable_barssince ? (ta.barssince(pivot_main)[x] == 1 and ta.barssince(pivot_minor)[x] != 1) : (pivot_main[x] and not pivot_minor[x])
+
+                    res := true
+                    break
+                    
+                else
+                    res := false
+                
+        res
+    
+    else
+    
+        true
+    
+    
+
+[ph_1, pl_1, up_thresh_1, down_thresh_1] = calc_ph_pl(left_len_1, right_len_1, use_1, tf_1, ph_arr_1, pl_arr_1, diff_array_1_h, diff_array_1_l)
+[ph_2, pl_2, up_thresh_2, down_thresh_2] = calc_ph_pl(left_len_2, right_len_2, use_2, tf_2, ph_arr_2, pl_arr_2, diff_array_2_h, diff_array_2_l, back_num_2)
+[ph_3, pl_3, up_thresh_3, down_thresh_3] = calc_ph_pl(left_len_3, right_len_3, use_3, tf_3, ph_arr_3, pl_arr_3, diff_array_3_h, diff_array_3_l, back_num_3)
+[ph_4, pl_4, up_thresh_4, down_thresh_4] = calc_ph_pl(left_len_4, right_len_4, use_4, tf_4, ph_arr_4, pl_arr_4, diff_array_4_h, diff_array_4_l, back_num_4)
+[ph_5, pl_5, up_thresh_5, down_thresh_5] = calc_ph_pl(left_len_5, right_len_5, use_5, tf_5, ph_arr_5, pl_arr_5, diff_array_5_h, diff_array_5_l, back_num_5)
+[ph_6, pl_6, up_thresh_6, down_thresh_6] = calc_ph_pl(left_len_6, right_len_6, use_6, tf_6, ph_arr_6, pl_arr_6, diff_array_6_h, diff_array_6_l, back_num_6)
+
+
+longExitPrice  = strategy.position_avg_price * (1 + profitPerc)
+shortExitPrice = strategy.position_avg_price * (1 - profitPerc)
+
+
+longExitPriceSL  = strategy.position_avg_price * (1 - lossPerc)
+shortExitPriceSL = strategy.position_avg_price * (1 + lossPerc)
+
+if (strategy.position_size > 0)
+
+    strategy.exit(id="Long TP/SL", limit=longExitPrice, comment_loss='Long SL', comment_profit='Long TP', stop=longExitPriceSL)
+
+    
+if (strategy.position_size < 0)
+
+    strategy.exit(id="Short TP/SL", limit=shortExitPrice, comment_loss='Short SL', comment_profit='Short TP', stop=shortExitPriceSL)
+
+
+
+src_diff_h_test = high - high[1]
+src_diff_l_test = low - low[1]
+
+var diff_h_test = array.new_float(na)
+var diff_l_test = array.new_float(na)
+
+
+array.push(diff_h_test, src_diff_h_test)
+array.push(diff_l_test, src_diff_l_test)
+
+avg_diff_array_h_test = array.avg(diff_h_test)
+avg_diff_array_l_test = array.avg(diff_l_test)
+
+
+diff_value_h_test= use_window ? ta.stdev(src_diff_h_test, threshold_window) : array.stdev(diff_h_test) 
+diff_value_l_test = use_window ? ta.stdev(src_diff_l_test, threshold_window) : array.stdev(diff_l_test) 
+
+up_thresh_test = use_threshold_dyn ? avg_diff_array_h_test + diff_value_h_test : use_threshold_static ? upper_threshold : float(na)
+down_thresh_test = use_threshold_dyn ? avg_diff_array_l_test - diff_value_l_test : use_threshold_static ? -lower_threshold : float(na)
+
+
+if send_signal(ph_1, ph_arr_1, pl_1, use_1, "S", window_lookback_entry) and send_signal(ph_2, ph_arr_2, pl_2, use_2, "S", window_lookback_entry) and send_signal(ph_3, ph_arr_3, pl_3, use_3, "S", window_lookback_entry) and send_signal(ph_4, ph_arr_4, pl_4, use_4, "S", window_lookback_entry) and send_signal(ph_5, ph_arr_5, pl_5, use_5, "S", window_lookback_entry) and send_signal(ph_6, ph_arr_6, pl_6, use_6, "S", window_lookback_entry)
+
+    
+    if (use_ma_diff or use_close_diff) and (use_threshold_dyn or use_threshold_static)
+
+        diff_1 = not na(diff_array_1_h) ? array.size(diff_array_1_h) > 0 ? array.get(diff_array_1_h, array.size(diff_array_1_h) - 1) > up_thresh_1: true: true
+        diff_2 = not na(diff_array_2_h) ? array.size(diff_array_2_h) > 0 ? array.get(diff_array_2_h, array.size(diff_array_2_h) - 1) > up_thresh_2: true: true
+        diff_3 = not na(diff_array_3_h) ? array.size(diff_array_3_h) > 0 ? array.get(diff_array_3_h, array.size(diff_array_3_h) - 1) > up_thresh_3: true: true
+        diff_4 = not na(diff_array_4_h) ? array.size(diff_array_4_h) > 0 ? array.get(diff_array_4_h, array.size(diff_array_4_h) - 1) > up_thresh_4: true: true
+        diff_5 = not na(diff_array_5_h) ? array.size(diff_array_5_h) > 0 ? array.get(diff_array_5_h, array.size(diff_array_5_h) - 1) > up_thresh_5: true: true
+        diff_6 = not na(diff_array_6_h) ? array.size(diff_array_6_h) > 0 ? array.get(diff_array_6_h, array.size(diff_array_6_h) - 1) > up_thresh_6: true: true
+
+        
+        if diff_1 and diff_2 and diff_3 and diff_4 and diff_5 and diff_6
+        
+            strategy.entry("Enter Short", strategy.short)
+    
+    else
+        strategy.entry("Enter Short", strategy.short)
+
+if send_signal(pl_1, pl_arr_1, ph_1, use_1, "L", window_lookback_entry) and send_signal(pl_2, pl_arr_2, ph_2, use_2, "L", window_lookback_entry) and send_signal(pl_3, pl_arr_3, ph_3, use_3, "L", window_lookback_entry) and send_signal(pl_4, pl_arr_4, ph_4, use_4, "L", window_lookback_entry) and send_signal(pl_5, pl_arr_5, ph_5, use_5, "L", window_lookback_entry) and send_signal(pl_6, pl_arr_6, ph_6, use_6, "L", window_lookback_entry)
+    
+    if (use_ma_diff or use_close_diff) and (use_threshold_dyn or use_threshold_static)
+
+        diff_1 = not na(diff_array_1_l) ? array.size(diff_array_1_l) > 0 ? array.get(diff_array_1_l, array.size(diff_array_1_l) - 1) < down_thresh_1: true: true
+        diff_2 = not na(diff_array_2_l) ? array.size(diff_array_2_l) > 0 ? array.get(diff_array_2_l, array.size(diff_array_2_l) - 1) < down_thresh_2: true: true
+        diff_3 = not na(diff_array_3_l) ? array.size(diff_array_3_l) > 0 ? array.get(diff_array_3_l, array.size(diff_array_3_l) - 1) < down_thresh_3: true: true
+        diff_4 = not na(diff_array_4_l) ? array.size(diff_array_4_l) > 0 ? array.get(diff_array_4_l, array.size(diff_array_4_l) - 1) < down_thresh_4: true: true
+        diff_5 = not na(diff_array_5_l) ? array.size(diff_array_5_l) > 0 ? array.get(diff_array_5_l, array.size(diff_array_5_l) - 1) < down_thresh_5: true: true
+        diff_6 = not na(diff_array_6_l) ? array.size(diff_array_6_l) > 0 ? array.get(diff_array_6_l, array.size(diff_array_6_l) - 1) < down_thresh_6: true: true
+                
+
+        if diff_1 and diff_2 and diff_3 and diff_4 and diff_5 and diff_6
+            strategy.entry("Enter Long", strategy.long)
+
+    else
+        strategy.entry("Enter Long", strategy.long)
+
+
+if (exit_1 ? send_signal(ph_1, ph_arr_1, pl_1, use_1, "S", window_lookback_exit) : true) and (exit_2 ? send_signal(ph_2, ph_arr_2, pl_2, use_2, "S", window_lookback_exit) : true) and (exit_2 ? send_signal(ph_3, ph_arr_3, pl_3, use_3, "S", window_lookback_exit) : true) and (exit_4 ? send_signal(ph_4, ph_arr_4, pl_4, use_4, "S", window_lookback_exit) : true) and (exit_5 ? send_signal(ph_5, ph_arr_5, pl_5, use_5, "S", window_lookback_exit) : true) and (exit_6 ? send_signal(ph_6, ph_arr_6, pl_6, use_6, "S", window_lookback_exit) : true)
+    
+    if use_window_lookback_exit
+        
+        if (use_ma_diff or use_close_diff) and (use_threshold_dyn or use_threshold_static)
+    
+            diff_1 = not na(diff_array_1_h) ? array.size(diff_array_1_h) > 0 ? array.get(diff_array_1_h, array.size(diff_array_1_h) - 1) > up_thresh_1: true: true
+            diff_2 = not na(diff_array_2_h) ? array.size(diff_array_2_h) > 0 ? array.get(diff_array_2_h, array.size(diff_array_2_h) - 1) > up_thresh_2: true: true
+            diff_3 = not na(diff_array_3_h) ? array.size(diff_array_3_h) > 0 ? array.get(diff_array_3_h, array.size(diff_array_3_h) - 1) > up_thresh_3: true: true
+            diff_4 = not na(diff_array_4_h) ? array.size(diff_array_4_h) > 0 ? array.get(diff_array_4_h, array.size(diff_array_4_h) - 1) > up_thresh_4: true: true
+            diff_5 = not na(diff_array_5_h) ? array.size(diff_array_5_h) > 0 ? array.get(diff_array_5_h, array.size(diff_array_5_h) - 1) > up_thresh_5: true: true
+            diff_6 = not na(diff_array_6_h) ? array.size(diff_array_6_h) > 0 ? array.get(diff_array_6_h, array.size(diff_array_6_h) - 1) > up_thresh_6: true: true
+                        
+            if diff_1 and diff_2 and diff_3 and diff_4 and diff_5 and diff_6
+            
+                strategy.close("Enter Long", 'Long Pos Closed')
+        
+        else
+            strategy.close("Enter Long", 'Long Pos Closed')
+            
+
+if (exit_1 ? send_signal(pl_1, pl_arr_1, ph_1, use_1, "L", window_lookback_exit) : true) and (exit_2 ? send_signal(pl_2, pl_arr_2, ph_2, use_2, "L", window_lookback_exit) : true) and (exit_3 ? send_signal(pl_3, pl_arr_3, ph_3, use_3, "L", window_lookback_exit) : true) and (exit_4 ? send_signal(pl_4, pl_arr_4, ph_4, use_4, "L", window_lookback_exit) : true) and (exit_5 ? send_signal(pl_5, pl_arr_5, ph_5, use_5, "L", window_lookback_exit) : true) and (exit_6 ? send_signal(pl_6, pl_arr_6, ph_6, use_6, "L", window_lookback_exit) : true)
+   
+        
+    if use_window_lookback_exit
+  
+    
+        if (use_ma_diff or use_close_diff) and (use_threshold_dyn or use_threshold_static)
+        
+            diff_1 = not na(diff_array_1_l) ? array.size(diff_array_1_l) > 0 ? array.get(diff_array_1_l, array.size(diff_array_1_l) - 1) < down_thresh_1: true: true
+            diff_2 = not na(diff_array_2_l) ? array.size(diff_array_2_l) > 0 ? array.get(diff_array_2_l, array.size(diff_array_2_l) - 1) < down_thresh_2: true: true
+            diff_3 = not na(diff_array_3_l) ? array.size(diff_array_3_l) > 0 ? array.get(diff_array_3_l, array.size(diff_array_3_l) - 1) < down_thresh_3: true: true
+            diff_4 = not na(diff_array_4_l) ? array.size(diff_array_4_l) > 0 ? array.get(diff_array_4_l, array.size(diff_array_4_l) - 1) < down_thresh_4: true: true
+            diff_5 = not na(diff_array_5_l) ? array.size(diff_array_5_l) > 0 ? array.get(diff_array_5_l, array.size(diff_array_5_l) - 1) < down_thresh_5: true: true
+            diff_6 = not na(diff_array_6_l) ? array.size(diff_array_6_l) > 0 ? array.get(diff_array_6_l, array.size(diff_array_6_l) - 1) < down_thresh_6: true: true
+
+            if diff_1 and diff_2 and diff_3 and diff_4 and diff_5 and diff_6
+                strategy.close("Enter Short", 'Short Pos Closed')
+    
+        else
+            strategy.close("Enter Short", 'Short Pos Closed')
+            
+
+heatmap_color(cond1, cond2) =>
+    if barstate.isconfirmed
+        (enable_barssince ? ta.barssince(cond2) == 1 : cond2) ? color.new(color.green, 20) : (enable_barssince ? ta.barssince(cond1) == 1 : cond1) ? color.new(color.red, 20) : color.new(color.orange, 20)
+    else
+        color.new(color.orange, 20)
+lapos_x = timenow + math.round(ta.change(time) * 3)
+lapos_y = ta.highest(5)  // + (0.15 * highest(20))
+
+// Displays the timeframe labels at the right    
+f_draw_label(x, y, _text, _textcolor, _size, useLabel) =>
+    if useLabel
+        var label Label = na
+        label.delete(Label)
+        Label := label.new(x, y, _text, color=color.new(color.white, 20), textcolor=_textcolor, style=label.style_none, yloc=yloc.price, xloc=xloc.bar_time, size=_size)
+        Label
+    else
+        na
+        
+// Display the labels in a more readable way
+// If timeframe selected is "Same as symbol" displays the timeframe.period string value
+res_to_string(res) =>
+    iff_1 = res == '1W' ? 'Weekly' : timeframe.period
+    iff_2 = res == '1D' ? 'Daily' : iff_1
+    iff_3 = res == '480' ? '8H' : iff_2
+    iff_4 = res == '240' ? '4H' : iff_3
+    iff_5 = res == '180' ? '3H' : iff_4
+    iff_6 = res == '120' ? '2H' : iff_5
+    iff_7 = res == '60' ? '1H' : iff_6
+    iff_8 = res == '30' ? '30Min' : iff_7
+    iff_9 = res == '15' ? '15Min' : iff_8
+    iff_10 = res == '5' ? '5Min' : iff_9
+    iff_11 = res == '3' ? '3Min' : iff_10
+    str = res == '1' ? '1Min' : iff_11
+    str
+
+
+
+h0 = hline(1, color=color.new(color.white, 10), linewidth=2, linestyle=hline.style_solid, display=use_1 ? display.all : display.none)
+h1 = hline(2, color=color.new(color.white, 10), linewidth=2, linestyle=hline.style_solid, display=use_1 or use_2 ? display.all : display.none)
+h2 = hline(3, color=color.new(color.white, 10), linewidth=2, linestyle=hline.style_solid, display=use_2 or use_3 ? display.all : display.none)
+h3 = hline(4, color=color.new(color.white, 10), linewidth=2, linestyle=hline.style_solid, display=use_3 or use_4 ? display.all : display.none)
+h4 = hline(5, color=color.new(color.white, 10), linewidth=2, linestyle=hline.style_solid, display=use_4 or use_5 ? display.all : display.none)
+h5 = hline(6, color=color.new(color.white, 10), linewidth=2, linestyle=hline.style_solid, display=use_5 or use_6 ? display.all : display.none)
+h6 = hline(7, color=color.new(color.white, 10), linewidth=2, linestyle=hline.style_solid, display=use_6 ? display.all : display.none)
+
+
+
+// draw the TF labels
+f_draw_label(lapos_x, 1, res_to_string(tf_1), color.white, size.large, use_1)
+f_draw_label(lapos_x, 2, res_to_string(tf_2), color.white, size.large, use_2)
+f_draw_label(lapos_x, 3, res_to_string(tf_3), color.white, size.large, use_3)
+f_draw_label(lapos_x, 4, res_to_string(tf_4), color.white, size.large, use_4)
+f_draw_label(lapos_x, 5, res_to_string(tf_5), color.white, size.large, use_5)
+f_draw_label(lapos_x, 6, res_to_string(tf_6), color.white, size.large, use_6)
+
+
+// Draw the green/red heatmap raws
+fill(h0, h1, color=heatmap_color(ph_1, pl_1), transp=90, display=use_1 ? display.all : display.none)
+fill(h1, h2, color=heatmap_color(ph_2, pl_2), transp=90, display=use_2 ? display.all : display.none)
+fill(h2, h3, color=heatmap_color(ph_3, pl_3), transp=90, display=use_3 ? display.all : display.none)
+fill(h3, h4, color=heatmap_color(ph_4, pl_4), transp=90, display=use_4 ? display.all : display.none)
+fill(h4, h5, color=heatmap_color(ph_5, pl_5), transp=90, display=use_5 ? display.all : display.none)
+fill(h5, h6, color=heatmap_color(ph_6, pl_6), transp=90, display=use_6 ? display.all : display.none)
